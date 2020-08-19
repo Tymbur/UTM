@@ -27,17 +27,17 @@ jobs:
       - name: Setup Xcode Path
         shell: bash
         run: |
-          if [ ! -d "${{ secrets.XCODE_PATH }}" ]; then
+          if [ ! -d "$%20secrets.XCODE_PATH%20" ]; then
             echo "WARNING: invalid XCODE_PATH specified in Github Secrets, using default Xcode version"
           else
-            sudo xcode-select -switch "${{ secrets.XCODE_PATH }}"
+            sudo xcode-select -switch "$%20secrets.XCODE_PATH%20"
           fi
       - name: Cache Sysroot
         id: cache-sysroot
         uses: actions/cache@v1
         with:
-          path: sysroot-${{ matrix.arch }}
-          key: ${{ matrix.arch }}-${{ hashFiles('scripts/build_dependencies.sh') }}-${{ hashFiles('patches/**') }}
+          path: sysroot-$%20matrix.arch%20
+          key: $%20matrix.arch%20-$%20hashFiles%28%27scripts/build_dependencies.sh%27%29%20-$%20hashFiles%28%27patches/%2A%2A%27%29%20
       - name: Setup Path
         shell: bash
         run: |
@@ -48,17 +48,17 @@ jobs:
         run: |
           brew install bison pkg-config nasm
           rm -f /usr/local/lib/pkgconfig/*.pc
-          ./scripts/build_dependencies.sh -a ${{ matrix.arch }}
+          ./scripts/build_dependencies.sh -a $%20matrix.arch%20
       - name: Compress Sysroot
         if: steps.cache-sysroot.outputs.cache-hit != 'true'
         run: |
           mkdir sysroot_tar
-          tar cf sysroot_tar/sysroot.tgz sysroot-${{ matrix.arch }}
+          tar cf sysroot_tar/sysroot.tgz sysroot-$%20matrix.arch%20
       - name: Upload Sysroot
         if: steps.cache-sysroot.outputs.cache-hit != 'true'
         uses: actions/upload-artifact@v1
         with:
-          name: Sysroot-${{ matrix.arch }}
+          name: Sysroot-$%20matrix.arch%20
           path: sysroot_tar
       - name: Build UTM (Simulator)
         if: matrix.arch == 'x86_64'
@@ -71,7 +71,7 @@ jobs:
       - name: Upload UTM
         uses: actions/upload-artifact@v1
         with:
-          name: UTM-${{ matrix.arch }}
+          name: UTM-$%20matrix.arch%20
           path: build-utm
   package:
     name: Package
@@ -95,9 +95,9 @@ jobs:
       - name: Upload Release Asset
         uses: actions/upload-release-asset@v1.0.1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: $%20secrets.GITHUB_TOKEN%20
         with:
-          upload_url: ${{ github.event.release.upload_url }}
+          upload_url: $%20github.event.release.upload_url%20
           asset_path: UTM.ipa
           asset_name: UTM.ipa
           asset_content_type: application/octet-stream
@@ -105,6 +105,6 @@ jobs:
         continue-on-error: true
         uses: peter-evans/repository-dispatch@v1
         with:
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-          repository: ${{ secrets.DISPATCH_REPO_NAME }}
+          token: $%20secrets.PERSONAL_ACCESS_TOKEN%20
+          repository: $%20secrets.DISPATCH_REPO_NAME%20
           event-type: new-release

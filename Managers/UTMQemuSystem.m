@@ -1,5 +1,5 @@
 //
-// Copyright © 2019 osy. All rights reserved.
+// Copyright © 2020 osy. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,6 +14,9 @@
 // limitations under the License.
 //
 
+#import <dlfcn.h>
+#import <sys/sysctl.h>
+#import <TargetConditionals.h>
 #import "UTMQemuSystem.h"
 #import "UTMConfiguration.h"
 #import "UTMConfiguration+Constants.h"
@@ -24,17 +27,106 @@
 #import "UTMConfiguration+Sharing.h"
 #import "UTMConfiguration+System.h"
 #import "UTMConfigurationPortForward.h"
+#import "UTMJailbreak.h"
 #import "UTMLogging.h"
 
-@implementation UTMQemuSystem
+@interface UTMQemuSystem ()
 
-- (id)initWithConfiguration:(UTMConfiguration *)configuration imgPath:(nonnull NSURL *)imgPath {
+@property (nonatomic, readonly) NSInteger emulatedCpuCount;
+
+@end
+
+@implementation UTMQemuSystem {
+    int (*_qemu_init)(int, const char *[], const char *[]);
+    void (*_qemu_main_loop)(void);
+    void (*_qemu_cleanup)(void);
+}
+
+static void *start_qemu(void *args) {
+    UTMQemuSystem *self = (__bridge_transfer UTMQemuSystem *)args;
+    NSArray<NSString *> *qemuArgv = self.argv;
+    
+    NSCAssert(self->_qemu_init != NULL, @"Started thread with invalid function.");
+    NSCAssert(self->_qemu_main_loop != NULL, @"Started thread with invalid function.");
+    NSCAssert(self->_qemu_cleanup != NULL, @"Started thread with invalid function.");
+    NSCAssert(qemuArgv, @"Started thread with invalid argv.");
+    
+    int argc = (int)qemuArgv.count + 1;
+    const char *argv[argc];
+    argv[0] = "qemu-system";
+    for (int i = 0; i < qemuArgv.count; i++) {
+        argv[i+1] = [qemuArgv[i] UTF8String];
+    }
+    const char *envp[] = { NULL };
+    self->_qemu_init(argc, argv, envp);
+    self->_qemu_main_loop();
+    self->_qemu_cleanup();
+    self.status = 0;
+    dispatch_semaphore_signal(self.done);
+    return NULL;
+}
+
+static size_t hostCpuCount(void) {
+    size_t len;
+    unsigned int ncpu = 0;
+
+    len = sizeof(ncpu);
+    sysctlbyname("hw.ncpu", &ncpu, &len, NULL, 0);
+    return ncpu;
+}
+
+- (instancetype)initWithConfiguration:(UTMConfiguration *)configuration imgPath:(nonnull NSURL *)imgPath {
     self = [self init];
     if (self) {
         self.configuration = configuration;
         self.imgPath = imgPath;
+        self.qmpPort = 4444;
+        self.spicePort = 5930;
+        self.entry = start_qemu;
     }
     return self;
+}
+
+- (NSArray<NSString *> *)argv {
+    NSArray<NSString *> *argv = [super argv];
+    if (argv.count > 0) {
+        return argv;
+    } else {
+        [self argsRequired];
+        if (!self.configuration.ignoreAllConfiguration) {
+            [self argsFromConfiguration];
+        }
+        return [super argv];
+    }
+}
+
+- (NSInteger)emulatedCpuCount {
+    NSInteger userCount = [self.configuration.systemCPUCount integerValue];
+    size_t ncpu = hostCpuCount();
+    if (userCount > 0 || ncpu == 0) {
+        return userCount; // user override
+    }
+#if defined(__arm__)
+    // in ARM we can only emulate other weak architectures
+    NSString *arch = self.configuration.systemArchitecture;
+    if ([arch isEqualToString:@"alpha"] ||
+        [arch isEqualToString:@"arm"] ||
+        [arch isEqualToString:@"aarch64"] ||
+        [arch isEqualToString:@"avr"] ||
+        [arch hasPrefix:@"mips"] ||
+        [arch hasPrefix:@"ppc"] ||
+        [arch hasPrefix:@"riscv"] ||
+        [arch hasPrefix:@"xtensa"]) {
+        return ncpu;
+    } else {
+        return 1;
+    }
+#elif defined(__i386__)
+    // in x86 we can emulate weak on strong
+    return ncpu;
+#else
+    return 1;
+#endif
 }
 
 - (void)architectureSpecificConfiguration {
@@ -51,7 +143,7 @@
 
 - (void)targetSpecificConfiguration {
     if ([self.configuration.systemTarget hasPrefix:@"virt"]) {
-        if ([self.configuration.systemArchitecture isEqualToString:@"aarch64"]) {
+        if (![self useHypervisor] && [self.configuration.systemArchitecture isEqualToString:@"aarch64"]) {
             [self pushArgv:@"-cpu"];
             [self pushArgv:@"cortex-a72"];
         }
@@ -65,39 +157,59 @@
     for (NSUInteger i = 0; i < self.configuration.countDrives; i++) {
         NSString *path = [self.configuration driveImagePathForIndex:i];
         UTMDiskImageType type = [self.configuration driveImageTypeForIndex:i];
+        BOOL hasImage = ![self.configuration driveRemovableForIndex:i] && path;
         NSURL *fullPathURL;
         
-        if ([path characterAtIndex:0] == '/') {
-            fullPathURL = [NSURL fileURLWithPath:path isDirectory:NO];
-        } else {
-            fullPathURL = [[self.imgPath URLByAppendingPathComponent:[UTMConfiguration diskImagesDirectory]] URLByAppendingPathComponent:[self.configuration driveImagePathForIndex:i]];
+        if (hasImage) {
+            if ([path characterAtIndex:0] == '/') {
+                fullPathURL = [NSURL fileURLWithPath:path isDirectory:NO];
+            } else {
+                fullPathURL = [[self.imgPath URLByAppendingPathComponent:[UTMConfiguration diskImagesDirectory]] URLByAppendingPathComponent:[self.configuration driveImagePathForIndex:i]];
+            }
+            [self accessDataWithBookmark:[fullPathURL bookmarkDataWithOptions:0
+                                               includingResourceValuesForKeys:nil
+                                                                relativeToURL:nil
+                                                                        error:nil]];
         }
         
         switch (type) {
             case UTMDiskImageTypeDisk:
             case UTMDiskImageTypeCD: {
+                NSString *drive;
                 [self pushArgv:@"-drive"];
-                [self pushArgv:[NSString stringWithFormat:@"file=%@,if=%@,media=%@,id=drive%lu", fullPathURL.path, [self.configuration driveInterfaceTypeForIndex:i], type == UTMDiskImageTypeCD ? @"cdrom" : @"disk", i]];
+                drive = [NSString stringWithFormat:@"if=%@,media=%@,id=drive%lu", [self.configuration driveInterfaceTypeForIndex:i], type == UTMDiskImageTypeCD ? @"cdrom" : @"disk", i];
+                if (hasImage) {
+                    drive = [NSString stringWithFormat:@"%@,file=%@", drive, fullPathURL.path];
+                }
+                [self pushArgv:drive];
                 break;
             }
             case UTMDiskImageTypeBIOS: {
-                [self pushArgv:@"-bios"];
-                [self pushArgv:fullPathURL.path];
+                if (!hasImage) {
+                    [self pushArgv:@"-bios"];
+                    [self pushArgv:fullPathURL.path];
+                }
                 break;
             }
             case UTMDiskImageTypeKernel: {
-                [self pushArgv:@"-kernel"];
-                [self pushArgv:fullPathURL.path];
+                if (!hasImage) {
+                    [self pushArgv:@"-kernel"];
+                    [self pushArgv:fullPathURL.path];
+                }
                 break;
             }
             case UTMDiskImageTypeInitrd: {
-                [self pushArgv:@"-initrd"];
-                [self pushArgv:fullPathURL.path];
+                if (!hasImage) {
+                    [self pushArgv:@"-initrd"];
+                    [self pushArgv:fullPathURL.path];
+                }
                 break;
             }
             case UTMDiskImageTypeDTB: {
-                [self pushArgv:@"-dtb"];
-                [self pushArgv:fullPathURL.path];
+                if (!hasImage) {
+                    [self pushArgv:@"-dtb"];
+                    [self pushArgv:fullPathURL.path];
+                }
                 break;
             }
             default: {
@@ -179,6 +291,34 @@
     }
 }
 
+- (NSString *)tcgAccelProperties {
+    NSString *accel = @"tcg";
+    
+    if (self.configuration.systemForceMulticore) {
+        accel = [accel stringByAppendingString:@",thread=multi"];
+    }
+    if ([self.configuration.systemJitCacheSize integerValue] > 0) {
+        accel = [accel stringByAppendingFormat:@",tb-size=%@", [self.configuration.systemJitCacheSize stringValue]];
+    }
+    
+    // Avoid alias mapping if we support dynamic codesigning
+#if TARGET_OS_IPHONE
+    if (@available(iOS 14, *)) {
+        // only iOS 14 supports the pthread JIT calls
+        if (jb_has_jit_entitlement()) {
+            accel = [accel stringByAppendingString:@",mirror-rwx=off"];
+        }
+    }
+#endif
+    
+    return accel;
+}
+
+- (BOOL)useHypervisor {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    return [defaults boolForKey:@"UseHypervisor"];
+}
+
 - (NSString *)machineProperties {
     if (self.configuration.systemMachineProperties.length > 0) {
         return self.configuration.systemMachineProperties; // use specified properties
@@ -193,25 +333,45 @@
     return @"";
 }
 
-- (void)argsFromConfiguration {
+- (void)argsRequired {
+    NSURL *resourceURL = [[NSBundle mainBundle] URLForResource:@"qemu" withExtension:nil];
     [self clearArgv];
-    [self pushArgv:@"qemu"];
     [self pushArgv:@"-L"];
-    [self pushArgv:[[NSBundle mainBundle] URLForResource:@"qemu" withExtension:nil].path];
+    [self accessDataWithBookmark:[resourceURL bookmarkDataWithOptions:0
+                                       includingResourceValuesForKeys:nil
+                                                        relativeToURL:nil
+                                                                error:nil]];
+    [self pushArgv:resourceURL.path];
+    [self pushArgv:@"-S"]; // startup stopped
     [self pushArgv:@"-qmp"];
-    [self pushArgv:@"tcp:localhost:4444,server,nowait"];
+    [self pushArgv:[NSString stringWithFormat:@"tcp:localhost:%lu,server,nowait", self.qmpPort]];
+    if (self.configuration.displayConsoleOnly) {
+        [self pushArgv:@"-nographic"];
+        // terminal character device
+        NSURL* ioFile = [self.configuration terminalInputOutputURL];
+        [self pushArgv: @"-chardev"];
+        [self pushArgv: [NSString stringWithFormat: @"pipe,id=term0,path=%@", ioFile.path]];
+        [self pushArgv: @"-serial"];
+        [self pushArgv: @"chardev:term0"];
+    } else {
+        [self pushArgv:@"-spice"];
+        [self pushArgv:[NSString stringWithFormat:@"port=%lu,addr=127.0.0.1,disable-ticketing,image-compression=off,playback-compression=off,streaming-video=off", self.spicePort]];
+    }
+}
+
+- (void)argsFromConfiguration {
     [self pushArgv:@"-smp"];
-    [self pushArgv:[NSString stringWithFormat:@"cpus=%@,sockets=1", self.configuration.systemCPUCount]];
+    [self pushArgv:[NSString stringWithFormat:@"cpus=%lu,sockets=1", self.emulatedCpuCount]];
     [self pushArgv:@"-machine"];
     [self pushArgv:[NSString stringWithFormat:@"%@,%@", self.configuration.systemTarget, [self machineProperties]]];
-    if (self.configuration.systemForceMulticore) {
+    if ([self useHypervisor]) {
         [self pushArgv:@"-accel"];
-        [self pushArgv:@"tcg,thread=multi"];
+        [self pushArgv:@"hvf"];
+        [self pushArgv:@"-cpu"];
+        [self pushArgv:@"host"];
     }
-    if ([self.configuration.systemJitCacheSize integerValue] > 0) {
-        [self pushArgv:@"-tb-size"];
-        [self pushArgv:[self.configuration.systemJitCacheSize stringValue]];
-    }
+    [self pushArgv:@"-accel"];
+    [self pushArgv:[self tcgAccelProperties]];
     [self architectureSpecificConfiguration];
     [self targetSpecificConfiguration];
     if (![self.configuration.systemBootDevice isEqualToString:@"hdd"]) {
@@ -231,19 +391,6 @@
     [self pushArgv:@"-name"];
     [self pushArgv:self.configuration.name];
     [self argsForDrives];
-    if (self.configuration.displayConsoleOnly) {
-        [self pushArgv:@"-nographic"];
-        // terminal character device
-        NSURL* ioFile = [self.configuration terminalInputOutputURL];
-        [self pushArgv: @"-chardev"];
-        [self pushArgv: [NSString stringWithFormat: @"pipe,id=term0,path=%@", ioFile.path]];
-        [self pushArgv: @"-serial"];
-        [self pushArgv: @"chardev:term0"];
-    } else {
-        [self pushArgv:@"-spice"];
-        [self pushArgv:@"port=5930,addr=127.0.0.1,disable-ticketing,image-compression=off,playback-compression=off,streaming-video=off"];
-
-    }
     [self argsForNetwork];
     // usb input if not legacy
     if (!self.configuration.inputLegacy) {
@@ -271,7 +418,9 @@
     // fix windows time issues
     [self pushArgv:@"-rtc"];
     [self pushArgv:@"base=localtime"];
+}
     
+- (void)argsFromUser {
     if (self.configuration.systemArguments.count != 0) {
         NSArray *addArgs = self.configuration.systemArguments;
         // Splits all spaces into their own, except when between quotes.
@@ -300,10 +449,21 @@
     }
 }
 
+- (BOOL)didLoadDylib:(void *)handle {
+    _qemu_init = dlsym(handle, "qemu_init");
+    _qemu_main_loop = dlsym(handle, "qemu_main_loop");
+    _qemu_cleanup = dlsym(handle, "qemu_cleanup");
+    return (_qemu_init != NULL) && (_qemu_main_loop != NULL) && (_qemu_cleanup != NULL);
+}
+
 - (void)startWithCompletion:(void (^)(BOOL, NSString * _Nonnull))completion {
-    NSString *dylib = [NSString stringWithFormat:@"libqemu-system-%@.dylib", self.configuration.systemArchitecture];
-    [self argsFromConfiguration];
-    [self startDylib:dylib main:@"qemu_main" completion:completion];
+    NSString *name = [NSString stringWithFormat:@"qemu-system-%@", self.configuration.systemArchitecture];
+    [self argsRequired];
+    if (!self.configuration.ignoreAllConfiguration) {
+        [self argsFromConfiguration];
+    }
+    [self argsFromUser];
+    [self start:name completion:completion];
 }
 
 @end

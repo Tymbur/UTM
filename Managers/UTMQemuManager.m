@@ -69,15 +69,20 @@ static void utm_watchdog_handler(WatchdogAction action, void *ctx) {
 }
 
 static void utm_guest_panicked_handler(GuestPanicAction action, bool has_info, GuestPanicInformation *info, void *ctx) {
-    
+    UTMQemuManager *self = (__bridge UTMQemuManager *)ctx;
+    [self.delegate qemuError:self error:NSLocalizedString(@"Guest panic", @"UTMQemuManager")];
 }
 
 static void utm_block_image_corrupted_handler(const char *device, bool has_node_name, const char *node_name, const char *msg, bool has_offset, int64_t offset, bool has_size, int64_t size, bool fatal, void *ctx) {
-    
+    UTMQemuManager *self = (__bridge UTMQemuManager *)ctx;
+    if (fatal) {
+        [self.delegate qemuError:self error:[NSString stringWithFormat:@"%s, %s: %s", device, node_name, msg]];
+    }
 }
 
 static void utm_block_io_error_handler(const char *device, bool has_node_name, const char *node_name, IoOperationType operation, BlockErrorAction action, bool has_nospace, bool nospace, const char *reason, void *ctx) {
-    
+    UTMQemuManager *self = (__bridge UTMQemuManager *)ctx;
+    [self.delegate qemuError:self error:[NSString stringWithFormat:@"%s, %s: %s", device, node_name, reason]];
 }
 
 static void utm_spice_connected_handler(SpiceBasicInfo *server, SpiceBasicInfo *client, void *ctx) {
@@ -104,6 +109,12 @@ static void utm_migration_pass_handler(int64_t pass, void *ctx) {
     
 }
 
+@interface UTMQemuManager ()
+
+@property (nonatomic, readwrite) BOOL isConnected;
+
+@end
+
 @implementation UTMQemuManager {
     UTMJSONStream *_jsonStream;
     void (^_rpc_finish)(NSDictionary *, NSError *);
@@ -117,11 +128,12 @@ void qmp_rpc_call(CFDictionaryRef args, CFDictionaryRef *ret, Error **err, void 
     __block NSError *nserr;
     dispatch_semaphore_wait(self->_cmd_lock, DISPATCH_TIME_FOREVER);
     self->_rpc_finish = ^(NSDictionary *ret_dict, NSError *ret_err){
+        dispatch_semaphore_t rpc_sema_copy = rpc_sema;
         NSCAssert(ret_dict || ret_err, @"Both dict and err are null");
         nserr = ret_err;
         dict = ret_dict;
-        dispatch_semaphore_signal(rpc_sema);
         self->_rpc_finish = nil;
+        dispatch_semaphore_signal(rpc_sema_copy); // copy to avoid race condition
     };
     if (![self.jsonStream sendDictionary:(__bridge NSDictionary *)args]) {
         self->_rpc_finish(nil, [NSError errorWithDomain:kUTMErrorDomain code:-1 userInfo:@{NSLocalizedDescriptionKey: NSLocalizedString(@"No connection for RPC.", "UTMQemuManager")}]);
@@ -135,16 +147,18 @@ void qmp_rpc_call(CFDictionaryRef args, CFDictionaryRef *ret, Error **err, void 
     }
     dict = nil;
     if (nserr) {
-        error_setg(err, "%s", [nserr.localizedDescription cStringUsingEncoding:NSUTF8StringEncoding]);
+        if (err) {
+            error_setg(err, "%s", [nserr.localizedDescription cStringUsingEncoding:NSUTF8StringEncoding]);
+        }
         UTMLog(@"RPC: %@", nserr);
     }
     dispatch_semaphore_signal(self->_cmd_lock);
 }
 
-- (id)init {
+- (instancetype)initWithPort:(NSInteger)port {
     self = [super init];
     if (self) {
-        _jsonStream = [[UTMJSONStream alloc] initHost:@"127.0.0.1" port:4444];
+        _jsonStream = [[UTMJSONStream alloc] initHost:@"127.0.0.1" port:port];
         _jsonStream.delegate = self;
         _cmd_lock = dispatch_semaphore_create(1);
     }
@@ -162,6 +176,7 @@ void qmp_rpc_call(CFDictionaryRef args, CFDictionaryRef *ret, Error **err, void 
 }
 
 - (void)disconnect {
+    self.isConnected = NO;
     [_jsonStream disconnect];
 }
 
@@ -207,7 +222,7 @@ void qmp_rpc_call(CFDictionaryRef args, CFDictionaryRef *ret, Error **err, void 
             *stop = YES;
         } else if ([key isEqualToString:@"QMP"]) {
             UTMLog(@"Got QMP handshake: %@", dict);
-            qmp_qmp_capabilities(false, NULL, NULL, (__bridge void *)self);
+            [self qmpEnterCommandModeWithError:nil]; // TODO: handle error
             *stop = YES;
         }
     }];
@@ -217,11 +232,42 @@ void qmp_rpc_call(CFDictionaryRef args, CFDictionaryRef *ret, Error **err, void 
     return [NSError errorWithDomain:kUTMErrorDomain code:-1 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithCString:error_get_pretty(qerr) encoding:NSASCIIStringEncoding]}];
 }
 
-- (void)vmPowerAction:(void (*)(Error **, void *))func completion:(void (^ _Nullable)(NSError * _Nullable))completion {
+- (BOOL)qmpEnterCommandModeWithError:(NSError * _Nullable __autoreleasing *)error {
+    NSDictionary *cmd = @{
+        @"execute": @"qmp_capabilities"
+    };
+    Error *qerr = NULL;
+    qmp_rpc_call((__bridge CFDictionaryRef)cmd, NULL, &qerr, (__bridge void *)self);
+    if (qerr != NULL) {
+        if (error) {
+            *error = [self errorForQerror:qerr];
+            error_free(qerr);
+        }
+        return NO;
+    } else {
+        self.isConnected = YES;
+        [self.delegate qemuQmpDidConnect:self];
+        qmp_cont(&qerr, (__bridge void *)self);
+        if (qerr != NULL) {
+            if (error) {
+                *error = [self errorForQerror:qerr];
+                error_free(qerr);
+            }
+            self.isConnected = NO;
+            return NO;
+        }
+        return YES;
+    }
+}
+
+- (void)vmPowerCommand:(NSString *)command completion:(void (^ _Nullable)(NSError * _Nullable))completion {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_BACKGROUND, 0), ^{
         Error *qerr = NULL;
         NSError *err;
-        func(&qerr, (__bridge void *)self);
+        NSDictionary *cmd = @{
+            @"execute": command
+        };
+        qmp_rpc_call((__bridge CFDictionaryRef)cmd, NULL, &qerr, (__bridge void *)self);
         if (qerr) {
             err = [self errorForQerror:qerr];
             error_free(qerr);
@@ -254,23 +300,23 @@ void qmp_rpc_call(CFDictionaryRef args, CFDictionaryRef *ret, Error **err, void 
 }
 
 - (void)vmPowerDownWithCompletion:(void (^ _Nullable)(NSError * _Nullable))completion {
-    [self vmPowerAction:qmp_system_powerdown completion:completion];
+    [self vmPowerCommand:@"system_powerdown" completion:completion];
 }
 
 - (void)vmResetWithCompletion:(void (^ _Nullable)(NSError * _Nullable))completion {
-    [self vmPowerAction:qmp_system_reset completion:completion];
+    [self vmPowerCommand:@"system_reset" completion:completion];
 }
 
 - (void)vmStopWithCompletion:(void (^ _Nullable)(NSError * _Nullable))completion {
-    [self vmPowerAction:qmp_stop completion:completion];
+    [self vmPowerCommand:@"stop" completion:completion];
 }
 
 - (void)vmResumeWithCompletion:(void (^ _Nullable)(NSError * _Nullable))completion {
-    [self vmPowerAction:qmp_cont completion:completion];
+    [self vmPowerCommand:@"cont" completion:completion];
 }
 
 - (void)vmQuitWithCompletion:(void (^ _Nullable)(NSError * _Nullable))completion {
-    [self vmPowerAction:qmp_quit completion:completion];
+    [self vmPowerCommand:@"quit" completion:completion];
 }
 
 - (void)vmSaveWithCompletion:(void (^)(NSString * _Nullable, NSError * _Nullable))completion snapshotName:(NSString *)name {

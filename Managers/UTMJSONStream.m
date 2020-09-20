@@ -31,16 +31,18 @@ enum ParserState {
     NSMutableData *_data;
     NSInputStream *_inputStream;
     NSOutputStream *_outputStream;
+    dispatch_queue_t _streamQueue;
     NSUInteger _parsedBytes;
     enum ParserState _state;
     int _open_curly_count;
 }
 
-- (id)initHost:(NSString *)host port:(UInt32)port {
-    self = [self init];
+- (instancetype)initHost:(NSString *)host port:(NSInteger)port {
+    self = [super init];
     if (self) {
         self.host = host;
         self.port = port;
+        _streamQueue = dispatch_queue_create("com.osy86.UTM.JSONStream", NULL);
     }
     return self;
 }
@@ -54,7 +56,7 @@ enum ParserState {
 - (void)connect {
     CFReadStreamRef readStream;
     CFWriteStreamRef writeStream;
-    CFStreamCreatePairWithSocketToHost(kCFAllocatorDefault, (__bridge CFStringRef)self.host, self.port, &readStream, &writeStream);
+    CFStreamCreatePairWithSocketToHost(kCFAllocatorDefault, (__bridge CFStringRef)self.host, (UInt32)self.port, &readStream, &writeStream);
     @synchronized (self) {
         _inputStream = CFBridgingRelease(readStream);
         _outputStream = CFBridgingRelease(writeStream);
@@ -62,10 +64,10 @@ enum ParserState {
         _parsedBytes = 0;
         _open_curly_count = -1;
         [_inputStream setDelegate:self];
-        [_inputStream scheduleInRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
+        CFReadStreamSetDispatchQueue((__bridge CFReadStreamRef)_inputStream, _streamQueue);
         [_inputStream open];
         [_outputStream setDelegate:self];
-        [_outputStream scheduleInRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
+        CFWriteStreamSetDispatchQueue((__bridge CFWriteStreamRef)_outputStream, _streamQueue);
         [_outputStream open];
     }
 }
@@ -73,11 +75,15 @@ enum ParserState {
 - (void)disconnect {
     @synchronized (self) {
         [_inputStream close];
-        [_inputStream removeFromRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
+        if (_inputStream) {
+            CFReadStreamSetDispatchQueue((__bridge CFReadStreamRef)_inputStream, NULL);
+        }
         [_inputStream setDelegate:nil];
         _inputStream = nil;
         [_outputStream close];
-        [_outputStream removeFromRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
+        if (_outputStream) {
+            CFWriteStreamSetDispatchQueue((__bridge CFWriteStreamRef)_outputStream, NULL);
+        }
         [_outputStream setDelegate:nil];
         _outputStream = nil;
         _data = nil;

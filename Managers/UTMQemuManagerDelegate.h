@@ -15,7 +15,8 @@
 //
 
 #import <Foundation/Foundation.h>
-#import "qapi-events.h"
+
+typedef enum ShutdownCause ShutdownCause;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -29,6 +30,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)qemuHasSuspended:(UTMQemuManager *)manager;
 - (void)qemuHasWakeup:(UTMQemuManager *)manager;
 - (void)qemuWillQuit:(UTMQemuManager *)manager guest:(BOOL)guest reason:(ShutdownCause)reason;
+- (void)qemuError:(UTMQemuManager *)manager error:(NSString *)error;
+- (void)qemuQmpDidConnect:(UTMQemuManager *)manager;
 
 @end
 

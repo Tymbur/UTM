@@ -16,7 +16,7 @@
 
 #import <Foundation/Foundation.h>
 
-@class UIImage;
+@class UTMScreenshot;
 @class UTMViewState;
 
 NS_ASSUME_NONNULL_BEGIN
@@ -24,10 +24,10 @@ NS_ASSUME_NONNULL_BEGIN
 @protocol UTMInputOutput <NSObject>
 
 - (BOOL)startWithError:(NSError **)err;
-- (void)connectWithCompletion: (void(^)(BOOL, NSError* _Nullable)) block;
+- (void)connectWithCompletion:(void(^)(BOOL, NSString * _Nullable))block;
 - (void)disconnect;
 - (void)setDebugMode: (BOOL)debugMode;
-- (UIImage* _Nullable)screenshot;
+- (UTMScreenshot* _Nullable)screenshot;
 - (void)syncViewState:(UTMViewState *)viewState;
 - (void)restoreViewState:(UTMViewState *)viewState;
 

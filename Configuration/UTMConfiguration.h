@@ -24,12 +24,15 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (nonatomic, copy) NSString *name;
 @property (nonatomic, nullable, copy) NSURL *existingPath;
+@property (nonatomic, nullable, copy) NSURL *selectedCustomIconPath;
 
 - (void)migrateConfigurationIfNecessary;
-- (id)initDefaults:(NSString *)name;
-- (id)initWithDictionary:(NSMutableDictionary *)dictionary name:(NSString *)name path:(NSURL *)path;
+- (instancetype)init NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithDictionary:(NSDictionary *)dictionary name:(NSString *)name path:(NSURL *)path NS_DESIGNATED_INITIALIZER;
 
 - (NSURL*)terminalInputOutputURL;
+- (void)resetDefaults;
+- (void)reloadConfigurationWithDictionary:(NSDictionary *)dictionary name:(NSString *)name path:(NSURL *)path;
 
 @end
 

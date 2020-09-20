@@ -17,13 +17,37 @@
 #import "UTMQemuImg.h"
 #import "UTMLogging.h"
 #import <dlfcn.h>
-#import <pthread.h>
 
-@implementation UTMQemuImg
+@implementation UTMQemuImg {
+    int (*_main)(int, const char *[]);
+}
+
+static void *start_qemu_img(void *args) {
+    UTMQemuImg *self = (__bridge_transfer UTMQemuImg *)args;
+    
+    NSCAssert(self->_main != NULL, @"Started thread with invalid function.");
+    NSCAssert(self.argv, @"Started thread with invalid argv.");
+    
+    int argc = (int)self.argv.count + 1;
+    const char *argv[argc];
+    argv[0] = "qemu-img";
+    for (int i = 0; i < self.argv.count; i++) {
+        argv[i+1] = [self.argv[i] UTF8String];
+    }
+    self.status = self->_main(argc, argv);
+    dispatch_semaphore_signal(self.done);
+    return NULL;
+}
+
+- (instancetype)initWithArgv:(NSArray<NSString *> *)argv {
+    if (self = [super initWithArgv:argv]) {
+        self.entry = start_qemu_img;
+    }
+    return self;
+}
 
 - (void)buildArgv {
     [self clearArgv];
-    [self pushArgv:@"qemu-img"];
     switch (self.op) {
         case kUTMQemuImgCreate: {
             [self pushArgv:@"create"];
@@ -34,13 +58,13 @@
                 [self pushArgv:[NSString stringWithFormat:@"encrypt.format=aes,encrypt.key-secret=%@", self.password]];
             }
             [self pushArgv:self.outputPath.path];
-            [self pushArgv:[NSString stringWithFormat:@"%luM", self.sizeMiB]];
+            [self pushArgv:[NSString stringWithFormat:@"%ldM", self.sizeMiB]];
             break;
         }
         case kUTMQemuImgResize: {
             [self pushArgv:@"resize"];
             [self pushArgv:self.outputPath.path];
-            [self pushArgv:[NSString stringWithFormat:@"%luM", self.sizeMiB]];
+            [self pushArgv:[NSString stringWithFormat:@"%ldM", self.sizeMiB]];
             break;
         }
         case kUTMQemuImgConvert: {
@@ -62,15 +86,20 @@
     }
 }
 
+- (BOOL)didLoadDylib:(void *)handle {
+    _main = dlsym(handle, "qemu_img_main");
+    return (_main != NULL);
+}
+
 - (void)startWithCompletion:(void(^)(BOOL, NSString *))completion {
     // FIXME: get rid of this
     static BOOL once = NO;
-    if (once) {
+    if (!self.hasRemoteProcess && once) {
         completion(NO, NSLocalizedString(@"Running qemu-img more than once is unimplemented. Restart the app to create another disk.", nil));
         return;
     }
     [self buildArgv];
-    [self startDylib:@"libqemu-img.dylib" main:@"qemu_img_main" completion:completion];
+    [self start:@"qemu-img" completion:completion];
     once = YES;
 }
 

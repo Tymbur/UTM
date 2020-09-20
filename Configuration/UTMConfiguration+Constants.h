@@ -21,26 +21,33 @@ NS_ASSUME_NONNULL_BEGIN
 @interface UTMConfiguration (Constants)
 
 + (NSArray<NSString *>*)supportedOptions:(NSString *)key pretty:(BOOL)pretty;
-+ (NSArray<NSString *>*)supportedArchitecturesPretty;
-+ (NSArray<NSString *>*)supportedArchitectures;
 + (NSArray<NSString *>*)supportedBootDevicesPretty;
 + (NSArray<NSString *>*)supportedBootDevices;
 + (NSArray<NSString *>*)supportedImageTypesPretty;
 + (NSArray<NSString *>*)supportedImageTypes;
-+ (NSArray<NSString *>*)supportedSoundCardDevices;
-+ (NSArray<NSString *>*)supportedSoundCardDevicesPretty;
-+ (NSArray<NSString *>*)supportedTargetsForArchitecture:(NSString *)architecture;
-+ (NSArray<NSString *>*)supportedTargetsForArchitecturePretty:(NSString *)architecture;
-+ (NSInteger)defaultTargetIndexForArchitecture:(NSString *)architecture;
 + (NSArray<NSString *>*)supportedResolutions;
 + (NSArray<NSString *>*)supportedDriveInterfaces;
 + (NSArray<NSString *>*)supportedScalersPretty;
 + (NSArray<NSString *>*)supportedScalers;
-+ (NSArray<NSString *>*)supportedConsoleThemes;
-+ (NSArray<NSString *>*)supportedConsoleFonts;
++ (NSArray<NSString *>*)supportedConsoleThemes API_AVAILABLE(ios(11));
++ (NSArray<NSString *>*)supportedConsoleFonts API_AVAILABLE(ios(11));
 + (NSString *)diskImagesDirectory;
 + (NSString *)defaultDriveInterface;
 + (NSString *)debugLogName;
+
+@end
+
+@interface UTMConfiguration (ConstantsGenerated)
+
++ (NSArray<NSString *>*)supportedArchitectures;
++ (NSArray<NSString *>*)supportedArchitecturesPretty;
++ (nullable NSArray<NSString *>*)supportedTargetsForArchitecture:(nullable NSString *)architecture;
++ (nullable NSArray<NSString *>*)supportedTargetsForArchitecturePretty:(nullable NSString *)architecture;
++ (NSInteger)defaultTargetIndexForArchitecture:(nullable NSString *)architecture;
++ (NSArray<NSString *>*)supportedNetworkCards;
++ (NSArray<NSString *>*)supportedNetworkCardsPretty;
++ (NSArray<NSString *>*)supportedSoundCardDevices;
++ (NSArray<NSString *>*)supportedSoundCardDevicesPretty;
 
 @end
 

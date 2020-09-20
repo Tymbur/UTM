@@ -1,0 +1,112 @@
+name: Build
+on:
+  push:
+    branches:
+      - 'master'
+      - 'dev'
+    tags-ignore:
+      - '**'
+    paths-ignore:
+      - 'LICENSE'
+      - '**.md'
+  pull_request:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    name: Build UTM
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [arm64, x86_64]
+        platform: [ios, macos]
+        exclude:
+          - platform: macos
+            arch: arm64 # not ready yet!
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+        with:
+          submodules: recursive
+#      - name: Setup Xcode Path
+#        shell: bash
+#        run: |
+#          if [ ! -d "${{ secrets.XCODE_PATH }}" ]; then
+#            echo "WARNING: invalid XCODE_PATH specified in Github Secrets, using default Xcode version"
+#          else
+#            sudo xcode-select -switch "${{ secrets.XCODE_PATH }}"
+#          fi
+      - name: Setup Xcode Beta Path
+        shell: bash
+        run: sudo xcode-select -switch /Applications/Xcode_12_beta.app
+      - name: Cache Sysroot
+        id: cache-sysroot
+        uses: actions/cache@v1
+        with:
+          path: sysroot-${{ matrix.platform }}-${{ matrix.arch }}
+          key: ${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('scripts/build_dependencies.sh') }}-${{ hashFiles('patches/**') }}
+      - name: Setup Path
+        shell: bash
+        run: |
+          echo "::add-path::/usr/local/opt/gettext/bin"
+          echo "::add-path::/usr/local/opt/bison/bin"
+      - name: Build Sysroot
+        if: steps.cache-sysroot.outputs.cache-hit != 'true'
+        run: |
+          brew install bison pkg-config nasm
+          rm -f /usr/local/lib/pkgconfig/*.pc
+          ./scripts/build_dependencies.sh -p ${{ matrix.platform }} -a ${{ matrix.arch }}
+      - name: Compress Sysroot
+        if: steps.cache-sysroot.outputs.cache-hit != 'true'
+        run: |
+          mkdir sysroot_tar
+          tar cf sysroot_tar/sysroot.tgz sysroot*
+      - name: Upload Sysroot
+        if: steps.cache-sysroot.outputs.cache-hit != 'true'
+        uses: actions/upload-artifact@v1
+        with:
+          name: Sysroot-${{ matrix.platform }}-${{ matrix.arch }}
+          path: sysroot_tar
+      - name: Build UTM
+        run: ./scripts/build_utm.sh -p ${{ matrix.platform }} -a ${{ matrix.arch }} -o build-utm/UTM
+      - name: Upload UTM
+        uses: actions/upload-artifact@v1
+        with:
+          name: UTM-${{ matrix.platform }}-${{ matrix.arch }}
+          path: build-utm
+  package:
+    name: Package
+    runs-on: macos-latest
+    needs: build
+    if: github.event_name == 'release'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+      - name: Download Artifact
+        uses: actions/download-artifact@v1
+        with:
+          name: UTM-ios-arm64
+      - name: Install ldid
+        run: |
+          brew install ldid
+      - name: Fakesign IPA
+        run: |
+          find UTM-ios-arm64/UTM.xcarchive -type f \( -path '*/UTM.app/UTM' -or -path '*/UTM.app/Frameworks/*.dylib' \) -exec chmod +x \{\} \;
+          ./scripts/resign.sh UTM-ios-arm64/UTM.xcarchive .
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: UTM.ipa
+          asset_name: UTM.ipa
+          asset_content_type: application/octet-stream
+      - name: Send Dispatch Event
+        continue-on-error: true
+        uses: peter-evans/repository-dispatch@v1
+        with:
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          repository: ${{ secrets.DISPATCH_REPO_NAME }}
+          event-type: new-release

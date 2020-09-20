@@ -1,5 +1,5 @@
 //
-// Copyright © 2019 osy. All rights reserved.
+// Copyright © 2020 osy. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,17 +16,18 @@
 
 #import "UTMQemu.h"
 
-@class UTMConfiguration;
-
 NS_ASSUME_NONNULL_BEGIN
 
 @interface UTMQemuSystem : UTMQemu
 
-@property (nonatomic, strong) UTMConfiguration *configuration;
-@property (nonatomic, copy) NSURL *imgPath;
+@property (nonatomic) UTMConfiguration *configuration;
+@property (nonatomic) NSURL *imgPath;
 @property (nonatomic, nullable) NSString *snapshot;
+@property (nonatomic) NSInteger qmpPort;
+@property (nonatomic) NSInteger spicePort;
 
-- (id)initWithConfiguration:(UTMConfiguration *)configuration imgPath:(NSURL *)imgPath;
+- (instancetype)init NS_UNAVAILABLE;
+- (instancetype)initWithConfiguration:(UTMConfiguration *)configuration imgPath:(NSURL *)imgPath;
 - (void)startWithCompletion:(void(^)(BOOL, NSString *))completion;
 
 @end

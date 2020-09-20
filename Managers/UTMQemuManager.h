@@ -27,7 +27,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) UTMJSONStream *jsonStream;
 @property (nonatomic, weak) id<UTMQemuManagerDelegate> delegate;
 @property (nonatomic, assign) int retries;
+@property (nonatomic, readonly) BOOL isConnected;
 
+- (instancetype)init NS_UNAVAILABLE;
+- (instancetype)initWithPort:(NSInteger)port NS_DESIGNATED_INITIALIZER;
 - (void)connect;
 - (void)disconnect;
 

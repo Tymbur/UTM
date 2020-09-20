@@ -16,6 +16,7 @@
 
 #import "CSSession.h"
 #import "CocoaSpice.h"
+#import "UTMLogging.h"
 #import <MobileCoreServices/MobileCoreServices.h>
 #import <UIKit/UIKit.h>
 #import <glib.h>
@@ -227,7 +228,7 @@ static gboolean cs_clipboard_request(SpiceMainChannel *main, guint selection,
 
     NSString *uti = utiForClipboardType(type);
     NSData *data = [[UIPasteboard generalPasteboard] dataForPasteboardType:uti];
-    spice_main_channel_clipboard_selection_notify(self->_main, selection, type, data.bytes, data.length);\
+    spice_main_channel_clipboard_selection_notify(self->_main, selection, type, data.bytes, data.length);
 
     return TRUE;
 }

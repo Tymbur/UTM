@@ -23,6 +23,7 @@
 
 @class UTMConfiguration;
 @class UTMQemuManager;
+@class UTMScreenshot;
 
 typedef NS_ENUM(NSInteger, UTMDisplayType) {
     UTMDisplayTypeFullGraphic,
@@ -33,23 +34,25 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface UTMVirtualMachine : NSObject<UTMQemuManagerDelegate>
 
-@property (nonatomic, readonly, nullable) id<UTMInputOutput> ioService;
-@property (nonatomic, readonly) NSURL *path;
+@property (nonatomic, readonly, nullable) NSURL *path;
 @property (nonatomic, weak, nullable) id<UTMVirtualMachineDelegate> delegate;
+@property (nonatomic, weak, nullable) id ioDelegate;
 @property (nonatomic, strong) NSURL *parentPath;
-@property (nonatomic, strong, readonly) UTMConfiguration *configuration;
+@property (nonatomic, readonly, copy) UTMConfiguration *configuration;
+@property (nonatomic, readonly) UTMViewState *viewState;
 @property (nonatomic, assign, readonly) UTMVMState state;
-@property (nonatomic, readonly, nullable) UTMQemuManager *qemu;
 @property (nonatomic, readonly) BOOL busy;
-@property (nonatomic, readonly) UIImage *screenshot;
+@property (nonatomic, readonly, nullable) UTMScreenshot *screenshot;
 
-+ (BOOL)URLisVirtualMachine:(NSURL *)url;
++ (BOOL)URLisVirtualMachine:(NSURL *)url NS_SWIFT_NAME(isVirtualMachine(url:));
 + (NSString *)virtualMachineName:(NSURL *)url;
 + (NSURL *)virtualMachinePath:(NSString *)name inParentURL:(NSURL *)parent;
 
-- (id)initWithURL:(NSURL *)url;
-- (id)initWithConfiguration:(UTMConfiguration *)configuration withDestinationURL:(NSURL *)dstUrl;
+- (instancetype)init NS_DESIGNATED_INITIALIZER;
+- (nullable instancetype)initWithURL:(NSURL *)url;
+- (instancetype)initWithConfiguration:(UTMConfiguration *)configuration withDestinationURL:(NSURL *)dstUrl;
 
+- (BOOL)reloadConfigurationWithError:(NSError * _Nullable *)err;
 - (BOOL)saveUTMWithError:(NSError * _Nullable *)err;
 
 - (BOOL)startVM;
@@ -61,7 +64,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)resumeVM;
 
 - (UTMDisplayType)supportedDisplayType;
-- (void)requestInputTablet:(BOOL)tablet completion:(void (^)(NSString * _Nullable, NSError * _Nullable))completion;
 
 @end
 

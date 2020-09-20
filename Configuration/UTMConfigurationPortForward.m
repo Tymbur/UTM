@@ -15,7 +15,33 @@
 //
 
 #import "UTMConfigurationPortForward.h"
+#import "UTM-Swift.h"
 
 @implementation UTMConfigurationPortForward
+
+- (void)setProtocol:(NSString *)protocol {
+    [self propertyWillChange];
+    _protocol = protocol;
+}
+
+- (void)setHostAddress:(NSString *)hostAddress {
+    [self propertyWillChange];
+    _hostAddress = hostAddress;
+}
+
+- (void)setHostPort:(NSInteger)hostPort {
+    [self propertyWillChange];
+    _hostPort = hostPort;
+}
+
+- (void)setGuestAddress:(NSString *)guestAddress {
+    [self propertyWillChange];
+    _guestAddress = guestAddress;
+}
+
+- (void)setGuestPort:(NSInteger)guestPort {
+    [self propertyWillChange];
+    _guestPort = guestPort;
+}
 
 @end

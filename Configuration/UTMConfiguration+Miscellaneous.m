@@ -16,10 +16,12 @@
 
 #import "UTMConfiguration+Constants.h"
 #import "UTMConfiguration+Miscellaneous.h"
+#import "UTM-Swift.h"
 
 extern const NSString *const kUTMConfigInputKey;
 extern const NSString *const kUTMConfigSoundKey;
 extern const NSString *const kUTMConfigDebugKey;
+extern const NSString *const kUTMConfigInfoKey;
 
 const NSString *const kUTMConfigTouchscreenModeKey = @"TouchscreenMode";
 const NSString *const kUTMConfigDirectInputKey = @"DirectInput";
@@ -30,6 +32,11 @@ const NSString *const kUTMConfigSoundEnabledKey = @"SoundEnabled";
 const NSString *const kUTMConfigSoundCardDeviceKey = @"SoundCard";
 
 const NSString *const kUTMConfigDebugLogKey = @"DebugLog";
+const NSString *const kUTMConfigIgnoreAllConfigurationKey = @"IgnoreAllConfiguration";
+
+const NSString *const kUTMConfigIconKey = @"Icon";
+const NSString *const kUTMConfigIconCustomKey = @"IconCustom";
+const NSString *const kUTMConfigNotesKey = @"Notes";
 
 @interface UTMConfiguration ()
 
@@ -42,9 +49,12 @@ const NSString *const kUTMConfigDebugLogKey = @"DebugLog";
 #pragma mark - Migration
 
 - (void)migrateMiscellaneousConfigurationIfNecessary {
-    // Add Debug dict if not exists
+    // Add categories that may not have existed before
     if (!self.rootDict[kUTMConfigDebugKey]) {
         self.rootDict[kUTMConfigDebugKey] = [NSMutableDictionary dictionary];
+    }
+    if (!self.rootDict[kUTMConfigInfoKey]) {
+        self.rootDict[kUTMConfigInfoKey] = [NSMutableDictionary dictionary];
     }
     
     if (!self.rootDict[kUTMConfigSoundKey][kUTMConfigSoundCardDeviceKey]) {
@@ -61,6 +71,7 @@ const NSString *const kUTMConfigDebugLogKey = @"DebugLog";
 #pragma mark - Other properties
 
 - (void)setInputLegacy:(BOOL)inputDirect {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigInputKey][kUTMConfigInputLegacyKey] = @(inputDirect);
 }
 
@@ -69,6 +80,7 @@ const NSString *const kUTMConfigDebugLogKey = @"DebugLog";
 }
 
 - (void)setInputScrollInvert:(BOOL)inputScrollInvert {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigInputKey][kUTMConfigInputInvertScrollKey] = @(inputScrollInvert);
 }
 
@@ -77,6 +89,7 @@ const NSString *const kUTMConfigDebugLogKey = @"DebugLog";
 }
 
 - (void)setSoundEnabled:(BOOL)soundEnabled {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigSoundKey][kUTMConfigSoundEnabledKey] = @(soundEnabled);
 }
 
@@ -85,6 +98,7 @@ const NSString *const kUTMConfigDebugLogKey = @"DebugLog";
 }
 
 - (void)setSoundCard:(NSString *)soundCard {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigSoundKey][kUTMConfigSoundCardDeviceKey] = soundCard;
 }
 
@@ -97,7 +111,44 @@ const NSString *const kUTMConfigDebugLogKey = @"DebugLog";
 }
 
 - (void)setDebugLogEnabled:(BOOL)debugLogEnabled {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigDebugKey][kUTMConfigDebugLogKey] = @(debugLogEnabled);
+}
+
+- (BOOL)ignoreAllConfiguration {
+    return [self.rootDict[kUTMConfigDebugKey][kUTMConfigIgnoreAllConfigurationKey] boolValue];
+}
+
+- (void)setIgnoreAllConfiguration:(BOOL)ignoreAllConfiguration {
+    [self propertyWillChange];
+    self.rootDict[kUTMConfigDebugKey][kUTMConfigIgnoreAllConfigurationKey] = @(ignoreAllConfiguration);
+}
+
+- (void)setIcon:(NSString *)icon {
+    [self propertyWillChange];
+    self.rootDict[kUTMConfigInfoKey][kUTMConfigIconKey] = icon;
+}
+
+- (nullable NSString *)icon {
+    return self.rootDict[kUTMConfigInfoKey][kUTMConfigIconKey];
+}
+
+- (void)setIconCustom:(BOOL)iconCustom {
+    [self propertyWillChange];
+    self.rootDict[kUTMConfigInfoKey][kUTMConfigIconCustomKey] = @(iconCustom);
+}
+
+- (BOOL)iconCustom {
+    return [self.rootDict[kUTMConfigInfoKey][kUTMConfigIconCustomKey] boolValue];
+}
+
+- (void)setNotes:(NSString *)notes {
+    [self propertyWillChange];
+    self.rootDict[kUTMConfigInfoKey][kUTMConfigNotesKey] = notes;
+}
+
+- (nullable NSString *)notes {
+    return self.rootDict[kUTMConfigInfoKey][kUTMConfigNotesKey];
 }
 
 @end
